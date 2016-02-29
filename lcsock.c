@@ -4,7 +4,7 @@
 #include <lua.h>
 #include <lauxlib.h>
 
-#if LUA_VERSION_NUM < 502
+#if (LUA_VERSION_NUM < 502 && !defined(luaL_newlib))
 #  define luaL_newlib(L,l) (lua_newtable(L), luaL_register(L,NULL,l))
 #endif
 
@@ -14,7 +14,7 @@
 #  include <windows.h>
 #  include <winsock2.h>
 
-static void startup()
+static void lcs_startup()
 {
 	WORD wVersionRequested;
 	WSADATA wsaData;
@@ -24,12 +24,12 @@ static void startup()
 
 	err = WSAStartup(wVersionRequested, &wsaData);
 	if (err != 0) {
-		printf("WSAStartup failed with error: %d\n", err);
+		fprintf(stderr, "WSAStartup failed with error: %d\n", err);
 		exit(1);
 	}
 }
 
-static void sleep_ms(int ms)
+static void lcs_sleep_ms(int ms)
 {
 	Sleep(ms);
 }
@@ -49,11 +49,11 @@ static void sleep_ms(int ms)
 
 #define closesocket close
 
-static void startup()
+static void lcs_startup()
 {
 }
 
-static void sleep_ms(int ms)
+static void lcs_sleep_ms(int ms)
 {
 	usleep((useconds_t)ms * 1000);
 }
@@ -71,7 +71,7 @@ static void sleep_ms(int ms)
 #endif
 
 
-static int fdcanread(int fd)
+static int lcs_fdcanread(int fd)
 {
 	int r = 0;
 	fd_set rfds;
@@ -90,7 +90,7 @@ typedef struct sock_client_s {
 	int connected;
 } sock_client_t;
 
-static sock_client_t * sock_client_create()
+static sock_client_t * lcsock_client_create()
 {
 	sock_client_t *p = malloc(sizeof(*p));
 	if (p == NULL)
@@ -102,14 +102,14 @@ nomem:
 	return NULL;
 }
 
-static int lua__sleep(lua_State *L)
+static int lua__lcs_sleep(lua_State *L)
 {
 	int ms = luaL_optinteger(L, 1, 0);
-	sleep_ms(ms);
+	lcs_sleep_ms(ms);
 	return 0;
 }
 
-static int lua__new(lua_State *L)
+static int lua__lcs_new(lua_State *L)
 {
 	int fd;
 	sock_client_t **p;
@@ -121,7 +121,7 @@ static int lua__new(lua_State *L)
 		return 2;
 	}
 	p = lua_newuserdata(L, sizeof(void *));
-	client = sock_client_create();
+	client = lcsock_client_create();
 	if (client == NULL) {
 		closesocket(fd);
 		lua_pushboolean(L, 0);
@@ -135,7 +135,7 @@ static int lua__new(lua_State *L)
 	return 1;
 }
 
-static int lua__connect(lua_State *L)
+static int lua__lcs_connect(lua_State *L)
 {
 	int ret;
 	struct sockaddr_in addr;
@@ -159,15 +159,15 @@ static int lua__connect(lua_State *L)
 	return 1;
 }
 
-static int lua__isconnected(lua_State *L)
+static int lua__lcs_isconnected(lua_State *L)
 {
 	sock_client_t * client = CHECK_CLIENT(L, 1);
-	printf("%s %d\n", __FUNCTION__, client->connected);
+	fprintf(stderr, "%s %d\n", __FUNCTION__, client->connected);
 	lua_pushboolean(L, client->connected);
 	return 1;
 }
 
-static int lua__disconnect(lua_State *L)
+static int lua__lcs_disconnect(lua_State *L)
 {
 	sock_client_t * client = CHECK_CLIENT(L, 1);
 	closesocket(client->fd);
@@ -175,7 +175,7 @@ static int lua__disconnect(lua_State *L)
 	return 0;
 }
 
-static int lua__read(lua_State *L)
+static int lua__lcs_read(lua_State *L)
 {
 	char tmp[8192];
 	char *buf = (char *)&tmp;
@@ -185,7 +185,7 @@ static int lua__read(lua_State *L)
 	if (!client->connected) {
 		return luaL_error(L, "not connected");
 	}
-	if (!fdcanread(client->fd)) {
+	if (!lcs_fdcanread(client->fd)) {
 		lua_pushboolean(L, 0);
 		lua_pushstring(L, "no data");
 		return 2;
@@ -200,7 +200,7 @@ static int lua__read(lua_State *L)
 	rsz = recv(client->fd, buf, sz, 0);
 	if (rsz > 0) {
 		lua_pushlstring(L, buf, rsz);
-	} else if (rsz < 0) {
+	} else if (rsz <= 0) {
 		client->connected = 0;
 	}
 	if (buf != (char *)&tmp) {
@@ -209,7 +209,7 @@ static int lua__read(lua_State *L)
 	return rsz > 0 ? 1 : 0;
 }
 
-static int lua__write(lua_State *L)
+static int lua__lcs_write(lua_State *L)
 {
 	size_t sz;
 	size_t p = 0;
@@ -255,11 +255,11 @@ static int lua__gc(lua_State *L)
 static int opencls__client(lua_State *L)
 {
 	luaL_Reg lmethods[] = {
-		{"read", lua__read},
-		{"write", lua__write},
-		{"connect", lua__connect},
-		{"isconnected", lua__isconnected},
-		{"disconnect", lua__disconnect},
+		{"read", lua__lcs_read},
+		{"write", lua__lcs_write},
+		{"connect", lua__lcs_connect},
+		{"isconnected", lua__lcs_isconnected},
+		{"disconnect", lua__lcs_disconnect},
 		{NULL, NULL},
 	};
 	luaL_newmetatable(L, CLIENT);
@@ -274,11 +274,11 @@ static int opencls__client(lua_State *L)
 int luaopen_lcsock(lua_State* L)
 {
 	luaL_Reg lfuncs[] = {
-		{"new", lua__new},
-		{"sleep", lua__sleep},
+		{"new", lua__lcs_new},
+		{"sleep", lua__lcs_sleep},
 		{NULL, NULL},
 	};
-	startup();
+	lcs_startup();
 	opencls__client(L);
 	luaL_newlib(L, lfuncs);
 	return 1;
