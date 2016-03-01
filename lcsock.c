@@ -8,6 +8,17 @@
 #  define luaL_newlib(L,l) (lua_newtable(L), luaL_register(L,NULL,l))
 #endif
 
+/**
+ * #define ENABLE_SOCK_DEBUG
+ */
+
+#ifdef ENABLE_SOCK_DEBUG
+# define LCS_DLOG(fmt, ...) fprintf(stderr, "<lcs>" fmt "\n", ##__VA_ARGS__)
+#else
+# define LCS_DLOG(...)
+#endif
+
+
 #define CLIENT "lcsock{client}"
 
 #ifdef WIN32
@@ -29,11 +40,6 @@ static void lcs_startup()
 	}
 }
 
-static void lcs_sleep_ms(int ms)
-{
-	Sleep(ms);
-}
-
 #define EINTR WSAEINTR
 #define EWOULDBLOCK WSAEWOULDBLOCK
 
@@ -53,23 +59,10 @@ static void lcs_startup()
 {
 }
 
-static void lcs_sleep_ms(int ms)
-{
-	usleep((useconds_t)ms * 1000);
-}
-
 #endif
 
 #define CHECK_CLIENT(L, idx)\
 	(*(sock_client_t **)luaL_checkudata(L, idx, CLIENT))
-
-#define ENABLE_SOCK_DEBUG
-#ifdef ENABLE_SOCK_DEBUG
-# define DLOG(fmt, ...) fprintf(stderr, "<sock>" fmt "\n", ##__VA_ARGS__)
-#else
-# define DLOG(...)
-#endif
-
 
 static int lcs_fdcanread(int fd)
 {
@@ -81,7 +74,9 @@ static int lcs_fdcanread(int fd)
 	FD_SET(fd, &rfds);
 
 	r = select(fd + 1, &rfds, NULL, NULL, &tv);
-	DLOG("%s %d", __FUNCTION__, r);
+	/**
+	 * LCS_DLOG("%s %d", __FUNCTION__, r);
+	 */
 	return r == 1;
 }
 
@@ -105,7 +100,12 @@ nomem:
 static int lua__lcs_sleep(lua_State *L)
 {
 	int ms = luaL_optinteger(L, 1, 0);
-	lcs_sleep_ms(ms);
+
+#if (defined(WIN32) || defined(_WIN32))
+	Sleep(ms);
+#else
+	usleep((useconds_t)ms * 1000);
+#endif
 	return 0;
 }
 
@@ -162,7 +162,7 @@ static int lua__lcs_connect(lua_State *L)
 static int lua__lcs_isconnected(lua_State *L)
 {
 	sock_client_t * client = CHECK_CLIENT(L, 1);
-	fprintf(stderr, "%s %d\n", __FUNCTION__, client->connected);
+	LCS_DLOG("%s %d", __FUNCTION__, client->connected);
 	lua_pushboolean(L, client->connected);
 	return 1;
 }
@@ -196,7 +196,7 @@ static int lua__lcs_read(lua_State *L)
 			return luaL_error(L, "nomem while read");
 		}
 	}
-	
+
 	rsz = recv(client->fd, buf, sz, 0);
 	if (rsz > 0) {
 		lua_pushlstring(L, buf, rsz);
@@ -243,11 +243,12 @@ static int lua__lcs_write(lua_State *L)
 	return 1;
 }
 
-static int lua__gc(lua_State *L)
+static int lua__lcs_gc(lua_State *L)
 {
 	sock_client_t * client = CHECK_CLIENT(L, 1);
-	if (client != NULL) 
+	if (client != NULL)
 		free(client);
+	LCS_DLOG("client gc");
 	return 0;
 }
 
@@ -266,7 +267,7 @@ static int opencls__client(lua_State *L)
 	lua_newtable(L);
 	luaL_register(L, NULL, lmethods);
 	lua_setfield(L, -2, "__index");
-	lua_pushcfunction (L, lua__gc);
+	lua_pushcfunction (L, lua__lcs_gc);
 	lua_setfield (L, -2, "__gc");
 	return 1;
 }
@@ -283,4 +284,3 @@ int luaopen_lcsock(lua_State* L)
 	luaL_newlib(L, lfuncs);
 	return 1;
 }
-
