@@ -422,8 +422,7 @@ static int opencls__client(lua_State *L)
 		{NULL, NULL},
 	};
 	luaL_newmetatable(L, LCS_CLIENT);
-	lua_newtable(L);
-	luaL_register(L, NULL, lmethods);
+	luaL_newlib(L, lmethods);
 	lua_setfield(L, -2, "__index");
 	lua_pushcfunction (L, lua__lcs_gc);
 	lua_setfield (L, -2, "__gc");
